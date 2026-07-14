@@ -1,87 +1,96 @@
 /**
- * Web Stream Scraper
- * Uses a CORS proxy to search public web for working m3u8 streams dynamically.
+ * Deep Web Crawler (Federated IPTV Search)
+ * Scrapes multiple massive open-source IPTV aggregators to find backup streams.
  */
 
-// List of CORS proxies to fallback on
 const CORS_PROXIES = [
   'https://api.allorigins.win/get?url=',
   'https://corsproxy.io/?'
 ];
 
-/**
- * Extracts .m3u8 URLs from a given text string (HTML)
- */
-function extractM3u8Links(html) {
-  const m3u8Regex = /https?:\/\/[^\s"'<>]+?\.m3u8/gi;
-  const matches = html.match(m3u8Regex) || [];
-  
-  // Deduplicate and filter out common false positives
-  const uniqueUrls = [...new Set(matches)];
-  return uniqueUrls.filter(url => 
-    !url.includes('example.com') && 
-    !url.includes('w3.org')
-  );
-}
+// Reliable massive federated repositories (CORS-friendly)
+const FEDERATED_REPOS = [
+  { type: 'm3u', url: 'https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8' },
+  { type: 'json', url: 'https://iptv-org.github.io/api/streams.json' }
+];
 
-/**
- * Normalizes strings for loose comparison
- */
 function normalize(str) {
   return str.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-/**
- * Scrapes DuckDuckGo Lite for the channel name and extracts m3u8 URLs.
- */
+function extractM3u8Links(html) {
+  const m3u8Regex = /https?:\/\/[^\s"'<>]+?\.m3u8/gi;
+  const matches = html.match(m3u8Regex) || [];
+  const uniqueUrls = [...new Set(matches)];
+  return uniqueUrls.filter(url => !url.includes('example.com') && !url.includes('w3.org'));
+}
+
 export async function scrapeWebForStream(channelName) {
   if (!channelName) return [];
-
-  const links = [];
-
-  // Create a looser version of the channel name (e.g. "Bumblebee TV Cute Zone" -> "Bumblebee TV")
-  const parts = channelName.split(' ');
-  const looseName = parts.slice(0, 2).join(' ');
   
-  // 1. Fallback Aggregators
-  try {
-    const rawRes = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent('https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8'));
-    const data = await rawRes.json();
-    const lines = data.contents.split('\n');
-    
-    // First pass: try to find an exact match
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].toLowerCase().includes(channelName.toLowerCase()) && lines[i+1] && lines[i+1].startsWith('http')) {
-        links.push(lines[i+1].trim());
-      }
-    }
-    
-    // Second pass: if no exact match, try the loose match (first two words)
-    if (links.length === 0 && looseName.length > 3) {
-      for (let i = 0; i < lines.length; i++) {
-        const normLine = normalize(lines[i]);
-        const normLoose = normalize(looseName);
-        if (normLine.includes(normLoose) && lines[i+1] && lines[i+1].startsWith('http')) {
-          links.push(lines[i+1].trim());
+  const links = new Set();
+  const looseName = channelName.split(' ').slice(0, 2).join(' ');
+  const normLoose = normalize(looseName);
+  const normExact = normalize(channelName);
+
+  // 1. Deep Crawl Federated Repositories Concurrently
+  const fetchPromises = FEDERATED_REPOS.map(async (repo) => {
+    try {
+      const res = await fetch(repo.url);
+      if (!res.ok) return;
+
+      if (repo.type === 'm3u') {
+        const text = await res.text();
+        const lines = text.split('\n');
+        
+        // Exact match first
+        for (let i = 0; i < lines.length; i++) {
+          if (normalize(lines[i]).includes(normExact) && lines[i+1] && lines[i+1].startsWith('http')) {
+            links.add(lines[i+1].trim());
+          }
         }
+        
+        // Fuzzy match if nothing
+        if (links.size === 0 && normLoose.length > 3) {
+          for (let i = 0; i < lines.length; i++) {
+            if (normalize(lines[i]).includes(normLoose) && lines[i+1] && lines[i+1].startsWith('http')) {
+              links.add(lines[i+1].trim());
+            }
+          }
+        }
+      } else if (repo.type === 'json') {
+        const json = await res.json();
+        
+        // Search JSON fields
+        json.forEach(stream => {
+          if (!stream.channel) return;
+          const streamNorm = normalize(stream.channel);
+          
+          if (streamNorm.includes(normExact) || (normLoose.length > 3 && streamNorm.includes(normLoose))) {
+            if (stream.url && stream.url.startsWith('http')) {
+              links.add(stream.url.trim());
+            }
+          }
+        });
       }
+    } catch (e) {
+      console.warn(`[DeepCrawler] Failed to query ${repo.url}`, e);
     }
-  } catch (e) {
-    console.warn("[WebScraper] Free-TV fallback failed", e);
+  });
+
+  await Promise.allSettled(fetchPromises);
+
+  if (links.size > 0) {
+    return Array.from(links);
   }
 
-  if (links.length > 0) {
-    return [...new Set(links)];
-  }
-
-  // 2. DuckDuckGo HTML Search as absolute last resort
+  // 2. Fallback to DuckDuckGo HTML Web Scraping via CORS Proxy
   const query = `"${channelName.replace(/ /g, '+')}"+ext:m3u8`;
   const targetUrl = `https://html.duckduckgo.com/html/?q=${query}`;
   
   for (const proxy of CORS_PROXIES) {
     try {
       const response = await fetch(`${proxy}${encodeURIComponent(targetUrl)}`);
-      
       if (!response.ok) continue;
 
       let html = '';
