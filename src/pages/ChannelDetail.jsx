@@ -3,14 +3,11 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useChannelStore } from '../store/useChannelStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useFavoritesStore } from '../store/useFavoritesStore';
-import { useHealthStore } from '../store/useHealthStore';
 import { Player } from '../components/Player';
 import { findAlternativeStream } from '../services/alternativeFinder';
 import { scrapeWebForStream } from '../services/webStreamScraper';
-import { findBestWorkingUrl, findFirstWorkingUrl, setCachedHealth } from '../services/streamHealthChecker';
 import { Toast } from '../components/Toast';
-import { Heart, ArrowLeft, AlertCircle, Loader2 } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { Heart, ArrowLeft, AlertCircle } from 'lucide-react';
 
 export function ChannelDetail() {
   const { id } = useParams();
@@ -19,13 +16,10 @@ export function ChannelDetail() {
   const addToHistory = useSettingsStore(state => state.addToHistory);
   const toggleFavorite = useFavoritesStore(state => state.toggleFavorite);
   const isFavorite = useFavoritesStore(state => state.isFavorite);
-  const setHealth = useHealthStore(state => state.setHealth);
 
   const [currentChannel, setCurrentChannel] = useState(null);
   const [toastMessage, setToastMessage] = useState('');
   const [showToast, setShowToast] = useState(false);
-  const [isValidating, setIsValidating] = useState(false); // Pre-play validation
-  const [validationMsg, setValidationMsg] = useState('');
 
   // Failover state
   const [retryCount, setRetryCount] = useState(0);
@@ -33,107 +27,48 @@ export function ChannelDetail() {
   const searchInProgress = useRef(false);
   const [triedUrls, setTriedUrls] = useState([]);
 
+  // Load channel IMMEDIATELY — no pre-validation, no blocking.
+  // Let the player try to connect directly via HLS.js.
+  // Only trigger failover if the player itself reports a real error.
   useEffect(() => {
     if (channels.length > 0 && id) {
       const channel = channels.find(c => c.id === decodeURIComponent(id));
       if (channel) {
-        loadChannelWithValidation(channel);
+        setCurrentChannel(channel);
         addToHistory(channel);
+        setRetryCount(0);
+        setTriedUrls([channel.streamUrl]);
+        searchInProgress.current = false;
+        setIsSearching(false);
       }
     }
   }, [id, channels]); // eslint-disable-line
 
-  /**
-   * Core intelligence: before loading the player, probe ALL known URLs
-   * for this channel in parallel and immediately use the first working one.
-   */
-  const loadChannelWithValidation = async (channel) => {
-    setIsValidating(true);
-    setValidationMsg('Checking stream availability...');
-    setRetryCount(0);
-    searchInProgress.current = false;
-
-    try {
-      const allUrls = [channel.streamUrl, ...(channel.backupUrls || [])].filter(Boolean);
-      
-      setValidationMsg(`Probing ${allUrls.length} source${allUrls.length !== 1 ? 's' : ''} in parallel...`);
-
-      const workingUrl = await findBestWorkingUrl(channel);
-
-      if (workingUrl) {
-        // Mark health in store for card indicators
-        setHealth(channel.streamUrl, workingUrl === channel.streamUrl);
-        setCachedHealth(workingUrl, true);
-
-        const readyChannel = workingUrl !== channel.streamUrl
-          ? { ...channel, streamUrl: workingUrl, backupUrls: allUrls.filter(u => u !== workingUrl) }
-          : channel;
-
-        setTriedUrls([workingUrl]);
-        setCurrentChannel(readyChannel);
-
-        if (workingUrl !== channel.streamUrl) {
-          setToastMessage('Primary stream offline — switched to working backup automatically.');
-          setShowToast(true);
-        }
-      } else {
-        // All known URLs are dead — go straight to web search
-        setValidationMsg('All local sources offline. Searching the web...');
-        setHealth(channel.streamUrl, false);
-        setCurrentChannel(channel); // Mount player (will show error UI)
-        setTriedUrls(allUrls);
-        handleStreamFailed(channel, true);
-        return;
-      }
-    } catch (e) {
-      console.error('[ChannelDetail] Validation error:', e);
-      setCurrentChannel(channel);
-      setTriedUrls([channel.streamUrl]);
-    }
-
-    setIsValidating(false);
-    setValidationMsg('');
-  };
-
-  const handleStreamFailed = async (failedChannel, fromValidation = false) => {
+  const handleStreamFailed = async (failedChannel) => {
     if (searchInProgress.current) return;
-
     searchInProgress.current = true;
-    if (!fromValidation) {
-      setIsSearching(true);
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
+    setIsSearching(true);
 
-    // Mark this URL as dead
-    setCachedHealth(failedChannel.streamUrl, false);
-    setHealth(failedChannel.streamUrl, false);
+    // Brief pause to prevent rapid UI flashing
+    await new Promise(resolve => setTimeout(resolve, 500));
 
+    // Try local backup URLs
     if (retryCount < 5) {
       const alternative = findAlternativeStream(failedChannel, channels, triedUrls);
       if (alternative) {
-        // Validate the alternative before switching to it
-        const altWorks = await findFirstWorkingUrl([alternative.streamUrl]);
-        if (altWorks) {
-          setRetryCount(prev => prev + 1);
-          setTriedUrls(prev => [...prev, alternative.streamUrl]);
-          setCurrentChannel(alternative);
-          setToastMessage('Switched to a working alternative source.');
-          setShowToast(true);
-          setIsSearching(false);
-          setIsValidating(false);
-          searchInProgress.current = false;
-          return;
-        } else {
-          setCachedHealth(alternative.streamUrl, false);
-          setHealth(alternative.streamUrl, false);
-        }
+        setRetryCount(prev => prev + 1);
+        setTriedUrls(prev => [...prev, alternative.streamUrl]);
+        setCurrentChannel(alternative);
+        setToastMessage('Trying alternative source...');
+        setShowToast(true);
+        setIsSearching(false);
+        searchInProgress.current = false;
+        return;
       }
     }
 
-    // All local sources exhausted — hit the web scraper
-    setIsSearching(true);
-    setIsValidating(false);
-    setToastMessage('All local sources offline. Searching the web...');
+    // All local sources exhausted — try web scraper
+    setToastMessage('Local sources offline. Searching the web...');
     setShowToast(true);
 
     try {
@@ -141,24 +76,17 @@ export function ChannelDetail() {
       const untriedWebLinks = webLinks.filter(url => !triedUrls.includes(url));
 
       if (untriedWebLinks.length > 0) {
-        // Validate web links in parallel too
-        const workingWebUrl = await findFirstWorkingUrl(untriedWebLinks);
-        if (workingWebUrl) {
-          setToastMessage('Found a working stream on the web!');
-          setShowToast(true);
-          setTriedUrls(prev => [...prev, workingWebUrl]);
-          setCurrentChannel({
-            ...failedChannel,
-            streamUrl: workingWebUrl,
-            id: failedChannel.id + '_web_' + Date.now(),
-          });
-          setRetryCount(0);
-        } else {
-          setToastMessage('Found web sources but all are offline too.');
-          setShowToast(true);
-        }
+        setToastMessage('Found web source! Connecting...');
+        setShowToast(true);
+        setTriedUrls(prev => [...prev, untriedWebLinks[0]]);
+        setCurrentChannel({
+          ...failedChannel,
+          streamUrl: untriedWebLinks[0],
+          id: failedChannel.id + '_web_' + Date.now(),
+        });
+        setRetryCount(0);
       } else {
-        setToastMessage('No alternative streams found anywhere.');
+        setToastMessage('No alternative streams found.');
         setShowToast(true);
       }
     } catch (err) {
@@ -170,26 +98,6 @@ export function ChannelDetail() {
     setIsSearching(false);
     searchInProgress.current = false;
   };
-
-  // Pre-validation loading screen
-  if (isValidating) {
-    return (
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        className="flex flex-col items-center justify-center py-24 gap-5"
-      >
-        <div className="relative">
-          <div className="w-14 h-14 rounded-full border-4 border-zinc-800" />
-          <div className="absolute inset-0 w-14 h-14 rounded-full border-4 border-t-[#0ea5e9] animate-spin" />
-        </div>
-        <div className="text-center">
-          <h2 className="text-lg font-semibold text-white mb-1">Finding Best Stream</h2>
-          <p className="text-gray-400 text-sm">{validationMsg}</p>
-        </div>
-      </motion.div>
-    );
-  }
 
   if (!currentChannel) {
     return (
@@ -246,7 +154,6 @@ export function ChannelDetail() {
                   {currentChannel.language}
                 </span>
               )}
-              {/* Backup sources count badge */}
               {currentChannel.backupUrls?.length > 0 && (
                 <span className="bg-green-500/10 text-green-400 px-3 py-1 rounded-full font-medium border border-green-500/20">
                   {currentChannel.backupUrls.length + 1} sources
