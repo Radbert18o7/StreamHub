@@ -44,8 +44,8 @@ export function ChannelDetail() {
     searchInProgress.current = true;
     setIsSearching(true);
     
-    // Give the UI a moment to show the searching state instead of rapid flashing
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    // Brief pause to show searching state and prevent rapid flashing
+    await new Promise(resolve => setTimeout(resolve, 500));
 
     if (retryCount < 5) {
       const alternative = findAlternativeStream(failedChannel, channels, triedUrls);

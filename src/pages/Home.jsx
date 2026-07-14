@@ -51,17 +51,30 @@ export function Home() {
 
   if (isLoading) {
     return (
-      <div className="space-y-12 animate-pulse pt-4">
-        {[1, 2, 3].map(i => (
-          <div key={i} className="space-y-6">
-            <div className="h-8 bg-zinc-800 rounded w-64 ml-8"></div>
-            <div className="flex space-x-4 overflow-hidden px-8">
-              {[1, 2, 3, 4, 5, 6].map(j => (
-                <div key={j} className="h-48 w-48 bg-zinc-800 rounded-xl flex-shrink-0"></div>
-              ))}
+      <div className="flex flex-col items-center justify-center py-24 gap-6">
+        <div className="relative">
+          <div className="w-16 h-16 rounded-full border-4 border-zinc-800" />
+          <div className="absolute inset-0 w-16 h-16 rounded-full border-4 border-t-[#0ea5e9] animate-spin" />
+        </div>
+        <div className="text-center">
+          <h2 className="text-xl font-bold text-white mb-2">Loading StreamHub</h2>
+          <p className="text-gray-400 text-sm max-w-xs">
+            Fetching channels from global sources and filtering out dead streams...
+          </p>
+        </div>
+        {/* Skeleton preview */}
+        <div className="w-full space-y-8 animate-pulse mt-4 opacity-30">
+          {[1, 2].map(i => (
+            <div key={i} className="space-y-4">
+              <div className="h-6 bg-zinc-800 rounded w-48 ml-2" />
+              <div className="flex gap-4 overflow-hidden px-2">
+                {[1,2,3,4,5,6].map(j => (
+                  <div key={j} className="h-44 w-36 bg-zinc-800 rounded-xl flex-shrink-0" />
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     );
   }
