@@ -1,8 +1,9 @@
 import React, { useMemo } from 'react';
 import { useChannelStore } from '../store/useChannelStore';
 import { Filter } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
-export function FilterSidebar() {
+export function FilterSidebar({ isOpen }) {
   const channels = useChannelStore(state => state.channels);
   const filters = useChannelStore(state => state.filters);
   const setFilter = useChannelStore(state => state.setFilter);
@@ -32,11 +33,20 @@ export function FilterSidebar() {
   }, [channels]);
 
   return (
-    <div className="w-64 flex-shrink-0 space-y-8 bg-[#1a1a24] border border-white/5 p-6 rounded-xl h-fit sticky top-24 hidden lg:block">
-      <div className="flex items-center space-x-2 text-white font-bold text-lg mb-6 border-b border-white/10 pb-4">
-        <Filter size={20} />
-        <h2>Filters</h2>
-      </div>
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div 
+          initial={{ width: 0, opacity: 0, marginLeft: 0 }}
+          animate={{ width: 256, opacity: 1, marginLeft: 0 }}
+          exit={{ width: 0, opacity: 0, marginLeft: -32 }}
+          transition={{ type: 'spring', bounce: 0, duration: 0.4 }}
+          className="flex-shrink-0 h-fit sticky top-24 overflow-hidden"
+        >
+          <div className="w-64 space-y-8 bg-[#1a1a24] border border-white/5 p-6 rounded-xl">
+            <div className="flex items-center space-x-2 text-white font-bold text-lg mb-6 border-b border-white/10 pb-4">
+              <Filter size={20} />
+              <h2>Filters</h2>
+            </div>
 
       <div>
         <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Category</h3>
@@ -90,6 +100,9 @@ export function FilterSidebar() {
       >
         Reset Filters
       </button>
-    </div>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

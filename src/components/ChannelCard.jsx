@@ -2,6 +2,7 @@ import React from 'react';
 import { Heart } from 'lucide-react';
 import { useFavoritesStore } from '../store/useFavoritesStore';
 import { twMerge } from 'tailwind-merge';
+import { motion } from 'framer-motion';
 
 export function ChannelCard({ channel, onClick, className }) {
   const toggleFavorite = useFavoritesStore(state => state.toggleFavorite);
@@ -17,10 +18,14 @@ export function ChannelCard({ channel, onClick, className }) {
   };
 
   return (
-    <div 
+    <motion.div 
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      whileHover={{ y: -4, scale: 1.02 }}
+      transition={{ duration: 0.2 }}
       onClick={() => onClick(channel)}
       className={twMerge(
-        "group relative bg-[#1a1a24] hover:bg-[#2a2a35] border border-white/5 rounded-xl p-4 cursor-pointer transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-[#0ea5e9]/10 flex flex-col items-center text-center h-48",
+        "group relative bg-[#1a1a24] hover:bg-[#2a2a35] border border-white/5 rounded-xl p-4 cursor-pointer shadow-lg hover:shadow-xl hover:shadow-[#0ea5e9]/10 flex flex-col items-center text-center h-48",
         className
       )}
     >
@@ -70,6 +75,6 @@ export function ChannelCard({ channel, onClick, className }) {
           </>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 }

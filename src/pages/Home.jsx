@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { useChannelStore } from '../store/useChannelStore';
 import { useFavoritesStore } from '../store/useFavoritesStore';
 import { useSettingsStore } from '../store/useSettingsStore';
@@ -66,7 +67,12 @@ export function Home() {
   }
 
   return (
-    <div className="space-y-4">
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      className="space-y-4"
+    >
       {watchHistory.length > 0 && (
         <CategoryRow title="Continue Watching" channels={watchHistory} onChannelClick={handleChannelClick} />
       )}
@@ -78,6 +84,6 @@ export function Home() {
       {Object.entries(categories).map(([title, items]) => (
         items.length > 0 && <CategoryRow key={title} title={title} channels={items} onChannelClick={handleChannelClick} />
       ))}
-    </div>
+    </motion.div>
   );
 }
