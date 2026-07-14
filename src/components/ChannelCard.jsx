@@ -1,24 +1,64 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Heart } from 'lucide-react';
 import { useFavoritesStore } from '../store/useFavoritesStore';
+import { useHealthStore } from '../store/useHealthStore';
+import { isStreamAlive } from '../services/streamHealthChecker';
 import { twMerge } from 'tailwind-merge';
 import { motion } from 'framer-motion';
 
 export function ChannelCard({ channel, onClick, className }) {
   const toggleFavorite = useFavoritesStore(state => state.toggleFavorite);
   const isFavorite = useFavoritesStore(state => state.isFavorite(channel.id));
+  const health = useHealthStore(state => state.health[channel.streamUrl]);
+  const setHealth = useHealthStore(state => state.setHealth);
+  const cardRef = useRef(null);
+  const checkedRef = useRef(false);
+
+  // Lazily check stream health when the card becomes visible
+  useEffect(() => {
+    if (checkedRef.current || health !== undefined) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !checkedRef.current) {
+          checkedRef.current = true;
+          observer.disconnect();
+          // Check in background — don't await
+          isStreamAlive(channel.streamUrl, 5000).then(alive => {
+            setHealth(channel.streamUrl, alive);
+          });
+        }
+      },
+      { rootMargin: '200px' } // Check when within 200px of viewport
+    );
+
+    if (cardRef.current) observer.observe(cardRef.current);
+    return () => observer.disconnect();
+  }, [channel.streamUrl, health, setHealth]);
 
   const handleFavoriteClick = (e) => {
     e.stopPropagation();
     toggleFavorite(channel);
   };
 
-  const getInitials = (name) => {
-    return name.substring(0, 2).toUpperCase();
+  const getInitials = (name) => name.substring(0, 2).toUpperCase();
+
+  // Health indicator dot
+  const HealthDot = () => {
+    if (health === undefined) return (
+      <span className="w-1.5 h-1.5 rounded-full bg-gray-600" title="Checking..." />
+    );
+    if (health === true) return (
+      <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" title="Stream online" />
+    );
+    return (
+      <span className="w-1.5 h-1.5 rounded-full bg-red-500/70" title="Stream offline" />
+    );
   };
 
   return (
     <motion.div
+      ref={cardRef}
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       whileHover={{ y: -4, scale: 1.02 }}
@@ -26,16 +66,23 @@ export function ChannelCard({ channel, onClick, className }) {
       onClick={() => onClick(channel)}
       className={twMerge(
         "group relative bg-[#1a1a24] hover:bg-[#2a2a35] border border-white/5 rounded-xl p-3 sm:p-4 cursor-pointer shadow-lg hover:shadow-xl hover:shadow-[#0ea5e9]/10 flex flex-col items-center text-center h-44 sm:h-48",
+        // Dim dead channels slightly
+        health === false ? 'opacity-60' : '',
         className
       )}
     >
-      {/* Favorite button — always visible on touch devices, hover-only on desktop */}
+      {/* Favorite button */}
       <button
         onClick={handleFavoriteClick}
         className="absolute top-2 right-2 p-1.5 sm:p-2 rounded-full bg-black/40 hover:bg-black/60 sm:opacity-0 sm:group-hover:opacity-100 opacity-100 transition-opacity z-10"
       >
         <Heart size={14} fill={isFavorite ? "#ef4444" : "none"} className={isFavorite ? "text-red-500" : "text-white"} />
       </button>
+
+      {/* Health dot — top left */}
+      <div className="absolute top-2.5 left-2.5 z-10">
+        <HealthDot />
+      </div>
 
       <div className="w-16 h-16 sm:w-20 sm:h-20 mb-3 sm:mb-4 rounded-lg bg-zinc-800 flex items-center justify-center overflow-hidden border border-white/10 shadow-inner flex-shrink-0">
         {channel.logo ? (
@@ -47,9 +94,7 @@ export function ChannelCard({ channel, onClick, className }) {
               className="w-full h-full object-contain p-1.5"
               onError={(e) => {
                 e.target.style.display = 'none';
-                if (e.target.nextSibling) {
-                  e.target.nextSibling.style.display = 'flex';
-                }
+                if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
               }}
             />
             <div className="w-full h-full hidden items-center justify-center text-xl font-bold text-white/50 bg-gradient-to-br from-zinc-700 to-zinc-900">
