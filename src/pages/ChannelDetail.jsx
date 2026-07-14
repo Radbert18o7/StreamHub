@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useChannelStore } from '../store/useChannelStore';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useFavoritesStore } from '../store/useFavoritesStore';
 import { Player } from '../components/Player';
 import { findAlternativeStream } from '../services/alternativeFinder';
+import { scrapeWebForStream } from '../services/webStreamScraper';
 import { Toast } from '../components/Toast';
 import { Heart, ArrowLeft, AlertCircle } from 'lucide-react';
 
@@ -15,10 +16,15 @@ export function ChannelDetail() {
   const addToHistory = useSettingsStore(state => state.addToHistory);
   const toggleFavorite = useFavoritesStore(state => state.toggleFavorite);
   const isFavorite = useFavoritesStore(state => state.isFavorite);
-  
   const [currentChannel, setCurrentChannel] = useState(null);
   const [toastMessage, setToastMessage] = useState('');
   const [showToast, setShowToast] = useState(false);
+  
+  // Failover state
+  const [retryCount, setRetryCount] = useState(0);
+  const [isSearching, setIsSearching] = useState(false);
+  const searchInProgress = useRef(false); // Ref for immediate sync checks
+  const [triedUrls, setTriedUrls] = useState([]); // Track all URLs we've tried
 
   useEffect(() => {
     if (channels.length > 0 && id) {
@@ -26,20 +32,67 @@ export function ChannelDetail() {
       if (channel) {
         setCurrentChannel(channel);
         addToHistory(channel);
+        setRetryCount(0); // Reset retries on new channel load
+        setTriedUrls([channel.streamUrl]); // Add initial URL
       }
     }
   }, [id, channels, addToHistory]);
 
-  const handleStreamFailed = (failedChannel) => {
-    const alternative = findAlternativeStream(failedChannel, channels);
-    if (alternative) {
-      setCurrentChannel(alternative);
-      setToastMessage(`Original stream unavailable. Switched to alternative source for ${alternative.originalName}`);
-      setShowToast(true);
-    } else {
-      setToastMessage(`No alternative streams found for ${failedChannel.name}`);
+  const handleStreamFailed = async (failedChannel) => {
+    if (searchInProgress.current) return; // Prevent double trigger
+    
+    searchInProgress.current = true;
+    setIsSearching(true);
+    
+    // Give the UI a moment to show the searching state instead of rapid flashing
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    if (retryCount < 5) {
+      const alternative = findAlternativeStream(failedChannel, channels, triedUrls);
+      if (alternative) {
+        setRetryCount(prev => prev + 1);
+        setTriedUrls(prev => [...prev, alternative.streamUrl]);
+        setCurrentChannel(alternative);
+        setToastMessage(`Switched to local alternative source...`);
+        setShowToast(true);
+        setIsSearching(false);
+        searchInProgress.current = false;
+        return;
+      }
+    }
+
+    // If local fails or max retries reached, try web scrape
+    setToastMessage(`Local sources failed. Searching web for live streams...`);
+    setShowToast(true);
+    
+    try {
+      const webLinks = await scrapeWebForStream(failedChannel.originalName || failedChannel.name);
+      
+      // Filter out URLs we have already tried
+      const untriedWebLinks = webLinks.filter(url => !triedUrls.includes(url));
+
+      if (untriedWebLinks && untriedWebLinks.length > 0) {
+        setToastMessage(`Found web source! Connecting...`);
+        setShowToast(true);
+        setTriedUrls(prev => [...prev, untriedWebLinks[0]]);
+        setCurrentChannel({
+          ...failedChannel,
+          streamUrl: untriedWebLinks[0], // Try the first untried link
+          id: failedChannel.id + '_web_' + Date.now(), // Unique ID to force player remount
+        });
+        setRetryCount(0); // Reset for the web source
+      } else {
+        setToastMessage(`No alternative streams found on the web.`);
+        setShowToast(true);
+      }
+    } catch (err) {
+      console.error(err);
+      setToastMessage(`Failed to find streams on the web.`);
       setShowToast(true);
     }
+    
+    setIsSearching(false);
+    searchInProgress.current = false;
   };
 
   if (!currentChannel) {
@@ -63,6 +116,7 @@ export function ChannelDetail() {
       <Player 
         channel={currentChannel} 
         onStreamFailed={handleStreamFailed} 
+        isSearching={isSearching}
         className="mb-8"
       />
 

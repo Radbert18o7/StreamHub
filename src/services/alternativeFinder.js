@@ -10,13 +10,22 @@ export function initAlternativeFinder(channels) {
   });
 }
 
-export function findAlternativeStream(brokenChannel, channels) {
+export function findAlternativeStream(brokenChannel, channels, triedUrls = []) {
   // 1. Check if the broken channel has backupUrls itself
   if (brokenChannel.backupUrls && brokenChannel.backupUrls.length > 0) {
-    // Clone to avoid mutating original state directly if we don't want to
-    const nextUrl = brokenChannel.backupUrls[0]; 
-    const remainingBackups = brokenChannel.backupUrls.slice(1);
-    return { ...brokenChannel, streamUrl: nextUrl, backupUrls: remainingBackups, originalName: brokenChannel.name };
+    // Find the first backup URL that hasn't been tried yet
+    const nextUrlIndex = brokenChannel.backupUrls.findIndex(url => !triedUrls.includes(url));
+    
+    if (nextUrlIndex !== -1) {
+      const nextUrl = brokenChannel.backupUrls[nextUrlIndex]; 
+      const remainingBackups = brokenChannel.backupUrls.slice(nextUrlIndex + 1);
+      return { 
+        ...brokenChannel, 
+        streamUrl: nextUrl, 
+        backupUrls: remainingBackups, 
+        originalName: brokenChannel.name 
+      };
+    }
   }
 
   // 2. Fuzzy search for channels with similar names or exact tvgId
@@ -26,10 +35,11 @@ export function findAlternativeStream(brokenChannel, channels) {
 
   if (fuseInstance) {
     const results = fuseInstance.search(brokenChannel.tvgId || brokenChannel.name);
-    // Filter out the broken channel itself by URL
+    // Filter out the broken channel itself, and any URLs we've already tried
     const validAlternatives = results
       .filter(res => res.item.streamUrl !== brokenChannel.streamUrl)
       .filter(res => res.item.id !== brokenChannel.id)
+      .filter(res => !triedUrls.includes(res.item.streamUrl))
       .sort((a, b) => a.score - b.score); // Lower score is better match
 
     if (validAlternatives.length > 0) {
